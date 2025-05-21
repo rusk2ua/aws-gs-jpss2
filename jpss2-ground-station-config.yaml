@@ -1,0 +1,159 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Ground Station Mission Profile for JPSS-2 with S3 Data Delivery in Ohio Region'
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Description: Name of the S3 bucket for data delivery
+    Default: jpss2-ground-station-data
+
+  S3BucketPrefix:
+    Type: String
+    Description: Prefix for S3 objects
+    Default: jpss2-data/
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID for Ground Station endpoint
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet ID for Ground Station endpoint
+
+  DownlinkCenterFrequency:
+    Type: Number
+    Description: Center frequency for downlink in MHz
+    Default: 8212.5
+
+Resources:
+  # IAM Role for S3 Data Delivery
+  GroundStationS3DeliveryRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: groundstation.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Tags:
+        - Key: Satellite
+          Value: JPSS-2
+
+  # Security Group for Ground Station
+  GroundStationSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Ground Station data delivery
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: GroundStationSecurityGroup
+        - Key: Satellite
+          Value: JPSS-2
+
+  # S3 Bucket for Data Delivery
+  GroundStationDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref S3BucketName
+      Tags:
+        - Key: Satellite
+          Value: JPSS-2
+
+  # S3 Recording Config (Dataflow Endpoint Group)
+  S3RecordingConfig:
+    Type: AWS::GroundStation::DataflowEndpointGroup
+    Properties:
+      Name: JPSS-2-S3-Recording-Config
+      EndpointDetails:
+        - Endpoint:
+            Name: !Ref S3BucketName
+            Prefix: !Ref S3BucketPrefix
+            Bucket:
+              Name: !Ref S3BucketName
+          SecurityDetails:
+            RoleArn: !GetAtt GroundStationS3DeliveryRole.Arn
+            SecurityGroupIds:
+              - !Ref GroundStationSecurityGroup
+            SubnetIds:
+              - !Ref SubnetId
+      Tags:
+        - Key: Satellite
+          Value: JPSS-2
+        - Key: DataDelivery
+          Value: S3
+
+  # Tracking Config
+  TrackingConfig:
+    Type: AWS::GroundStation::Config
+    Properties:
+      Name: JPSS-2-Tracking-Config
+      ConfigData:
+        TrackingConfig:
+          Autotrack: PREFERRED
+      Tags:
+        - Key: Satellite
+          Value: JPSS-2
+
+  # Downlink Demod Decode Config
+  DownlinkDemodDecodeConfig:
+    Type: AWS::GroundStation::Config
+    Properties:
+      Name: JPSS-2-Downlink-Config
+      ConfigData:
+        AntennaDownlinkDemodDecodeConfig:
+          SpectrumConfig:
+            CenterFrequency:
+              Units: MHz
+              Value: !Ref DownlinkCenterFrequency
+            Polarization: RIGHT_HAND
+          DemodulationConfig:
+            UnvalidatedJSON: '{"type": "QPSK", "symbolRate": 15000000}'
+          DecodeConfig:
+            UnvalidatedJSON: '{"type": "VITERBI", "codeRate": "1/2"}'
+      Tags:
+        - Key: Satellite
+          Value: JPSS-2
+
+  # Mission Profile
+  MissionProfile:
+    Type: AWS::GroundStation::MissionProfile
+    Properties:
+      Name: JPSS-2-S3-DataDelivery-Profile
+      ContactPrePassDurationSeconds: 120
+      ContactPostPassDurationSeconds: 120
+      MinimumViableContactDurationSeconds: 180
+      TrackingConfigArn: !GetAtt TrackingConfig.Arn
+      DataflowEdges:
+        - Source: downlink-demod-decode
+          Destination: s3-recording
+      Tags:
+        - Key: Satellite
+          Value: JPSS-2
+        - Key: DataDelivery
+          Value: S3
+
+Outputs:
+  MissionProfileArn:
+    Description: ARN of the created mission profile
+    Value: !GetAtt MissionProfile.Arn
+
+  S3BucketName:
+    Description: Name of the S3 bucket for data delivery
+    Value: !Ref GroundStationDataBucket
+
+  TrackingConfigArn:
+    Description: ARN of the tracking config
+    Value: !GetAtt TrackingConfig.Arn
+
+  DownlinkConfigArn:
+    Description: ARN of the downlink demod decode config
+    Value: !GetAtt DownlinkDemodDecodeConfig.Arn
+
+  S3RecordingConfigArn:
+    Description: ARN of the S3 recording config
+    Value: !GetAtt S3RecordingConfig.Arn
